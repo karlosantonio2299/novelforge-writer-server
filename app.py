@@ -51,8 +51,9 @@ def ensure_llama_server() -> Path:
         return server
 
     arch = detect_arch()
-    # Try Ubuntu CPU release asset from llama.cpp. Keep the release overridable in case asset names change.
-    release = os.getenv("LLAMA_CPP_RELEASE", "b6162")
+    # Current official llama.cpp Ubuntu CPU release asset.
+    # Override with LLAMA_CPP_RELEASE if needed later.
+    release = os.getenv("LLAMA_CPP_RELEASE", "b10612")
     asset = f"llama-{release}-bin-ubuntu-{arch}.tar.gz"
     url = f"https://github.com/ggml-org/llama.cpp/releases/download/{release}/{asset}"
     archive = ROOT / asset
