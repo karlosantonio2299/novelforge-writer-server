@@ -17,8 +17,8 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 MODEL_FILE = MODEL_DIR / "Qwen3-1.7B-Q3_K_L.gguf"
 HF_MODEL_URL = "https://huggingface.co/exebr/novelforge-qwen3-1.7b-q3/resolve/main/Qwen3-1.7B-Q3_K_L.gguf?download=true"
-# 8K benchmark: env N_CTX can override this without another code change.
-CONTEXT = os.getenv("N_CTX", "8192")
+# 16K benchmark: env N_CTX can override this without another code change.
+CONTEXT = os.getenv("N_CTX", "16384")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
@@ -167,7 +167,7 @@ def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Eve
 
 def main() -> None:
     log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}")
-    log("benchmark profile: 1 slot / 2 threads / prompt cache enabled / 8K context")
+    log("benchmark profile: 1 slot / 2 threads / prompt cache enabled / 16K context")
     ensure_model()
     server = ensure_llama_server()
     cloudflared = ensure_cloudflared()
