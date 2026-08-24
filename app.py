@@ -2,10 +2,8 @@ import os
 import platform
 import shutil
 import stat
-import subprocess
 import sys
 import tarfile
-import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -43,36 +41,75 @@ def detect_arch() -> str:
     raise RuntimeError(f"Unsupported architecture: {machine}")
 
 
+def find_runtime_server() -> Path | None:
+    # Prefer a llama-server that still lives beside the .so files shipped in
+    # the official archive. A previous bootstrap copied only the executable
+    # to bin/, which breaks dynamic linking on newer llama.cpp builds.
+    candidates = list(BIN_DIR.rglob("llama-server")) if BIN_DIR.exists() else []
+    for candidate in candidates:
+        if candidate.parent != BIN_DIR and list(candidate.parent.glob("*.so*")):
+            candidate.chmod(candidate.stat().st_mode | stat.S_IEXEC)
+            return candidate
+    for candidate in candidates:
+        if list(candidate.parent.glob("*.so*")):
+            candidate.chmod(candidate.stat().st_mode | stat.S_IEXEC)
+            return candidate
+    return None
+
+
 def ensure_llama_server() -> Path:
     BIN_DIR.mkdir(parents=True, exist_ok=True)
-    server = BIN_DIR / "llama-server"
-    if server.exists():
-        server.chmod(server.stat().st_mode | stat.S_IEXEC)
-        return server
+
+    existing = find_runtime_server()
+    if existing:
+        log(f"llama.cpp runtime already present: {existing}")
+        return existing
+
+    # Remove the stale standalone executable created by the old bootstrap.
+    stale = BIN_DIR / "llama-server"
+    if stale.exists():
+        log("removing stale standalone llama-server (shared libraries missing)")
+        stale.unlink()
 
     arch = detect_arch()
-    # Current official llama.cpp Ubuntu CPU release asset.
-    # Override with LLAMA_CPP_RELEASE if needed later.
     release = os.getenv("LLAMA_CPP_RELEASE", "b10612")
     asset = f"llama-{release}-bin-ubuntu-{arch}.tar.gz"
     url = f"https://github.com/ggml-org/llama.cpp/releases/download/{release}/{asset}"
     archive = ROOT / asset
+    runtime_dir = BIN_DIR / release
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         download(url, archive)
         with tarfile.open(archive, "r:gz") as tf:
-            tf.extractall(BIN_DIR)
+            tf.extractall(runtime_dir)
     finally:
         if archive.exists():
             archive.unlink()
 
-    candidates = list(BIN_DIR.rglob("llama-server"))
+    candidates = list(runtime_dir.rglob("llama-server"))
     if not candidates:
         raise RuntimeError("llama-server was not found after extracting the release asset")
-    real = candidates[0]
-    if real != server:
-        shutil.copy2(real, server)
+
+    server = candidates[0]
     server.chmod(server.stat().st_mode | stat.S_IEXEC)
+    log(f"llama.cpp runtime extracted: {server}")
     return server
+
+
+def runtime_env(server: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    lib_dirs = {str(server.parent)}
+    for so in BIN_DIR.rglob("*.so*"):
+        lib_dirs.add(str(so.parent))
+    old = env.get("LD_LIBRARY_PATH", "")
+    if old:
+        lib_dirs.add(old)
+    env["LD_LIBRARY_PATH"] = ":".join(sorted(lib_dirs))
+    log(f"LD_LIBRARY_PATH={env['LD_LIBRARY_PATH']}")
+    return env
 
 
 def ensure_model() -> None:
@@ -98,7 +135,7 @@ def main() -> None:
         "--threads-batch", os.getenv("LLAMA_THREADS_BATCH", "2"),
     ]
     log("starting llama-server: " + " ".join(cmd))
-    os.execv(str(server), cmd)
+    os.execve(str(server), cmd, runtime_env(server))
 
 
 if __name__ == "__main__":
