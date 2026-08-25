@@ -18,10 +18,14 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 MODEL_FILE = MODEL_DIR / "Qwen3-1.7B-Q3_K_L.gguf"
 HF_MODEL_URL = "https://huggingface.co/exebr/novelforge-qwen3-1.7b-q3/resolve/main/Qwen3-1.7B-Q3_K_L.gguf?download=true"
-# NovelForge now routes compact canon/state instead of whole chapters. 8K is ample for the
-# active prompt and saves a large KV-cache reservation on this 2-core / ~3.6 GiB container.
-# N_CTX can still override this without a code change if a larger deployment is used later.
+# NovelForge routes compact canon/state instead of whole chapters. 8K leaves generous room
+# while avoiding the much larger KV reservation of the old 16K setup.
 CONTEXT = os.getenv("N_CTX", "8192")
+# llama.cpp defaults are optimized for much larger machines (batch 2048 / ubatch 512).
+# The Writer's prompts are compact, so bounded buffers reduce transient RAM on this 2-core box.
+# Both remain overrideable for benchmarking on larger hosts.
+BATCH_SIZE = os.getenv("LLAMA_BATCH", "768")
+UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "256")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
@@ -147,7 +151,7 @@ def pipe_output(process:subprocess.Popen,prefix:str,url_event:threading.Event|No
             if match:
                 public_url=match.group(0); log("="*72); log(f"PUBLIC WRITER URL: {public_url}"); log(f"OPENAI API: {public_url}/v1/chat/completions"); log("="*72); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
 def llama_command(server:Path)->list[str]:
-    return [str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",os.getenv("LLAMA_THREADS","2"),"--threads-batch",os.getenv("LLAMA_THREADS_BATCH","2"),"--cache-reuse",os.getenv("LLAMA_CACHE_REUSE","256")]
+    return [str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",os.getenv("LLAMA_THREADS","2"),"--threads-batch",os.getenv("LLAMA_THREADS_BATCH","2"),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",os.getenv("LLAMA_CACHE_REUSE","256")]
 def start_llama(server:Path)->subprocess.Popen:
     mark_activity(False); cmd=llama_command(server); log("starting llama-server: "+" ".join(cmd)); p=subprocess.Popen(cmd,env=runtime_env(server),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); threading.Thread(target=pipe_output,args=(p,"llama",None,True),daemon=True).start(); wait_for_local_server(int(PORT),p); return p
 def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
@@ -156,7 +160,7 @@ def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
     try: process.wait(timeout=timeout)
     except subprocess.TimeoutExpired: log(f"{name} did not stop in time; killing it"); process.kill(); process.wait(timeout=5)
 def main()->None:
-    emergency=effective_emergency_mb(); log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {emergency} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
+    emergency=effective_emergency_mb(); log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT} batch={BATCH_SIZE} ubatch={UBATCH_SIZE}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {emergency} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
     ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True; log_kernel_memory()
     tunnel=subprocess.Popen([str(cloudflared),"tunnel","--no-autoupdate","--url",f"http://127.0.0.1:{PORT}"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); url_event=threading.Event(); threading.Thread(target=pipe_output,args=(tunnel,"cloudflared",url_event),daemon=True).start(); url_event.wait(timeout=60); last_defer_log=0.0
     try:
