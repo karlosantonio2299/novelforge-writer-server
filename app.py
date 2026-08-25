@@ -17,15 +17,55 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 MODEL_FILE = MODEL_DIR / "Qwen3-1.7B-Q3_K_L.gguf"
 HF_MODEL_URL = "https://huggingface.co/exebr/novelforge-qwen3-1.7b-q3/resolve/main/Qwen3-1.7B-Q3_K_L.gguf?download=true"
-# 16K benchmark: env N_CTX can override this without another code change.
 CONTEXT = os.getenv("N_CTX", "16384")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
 
+# Safe recycle defaults for a ~3.3 GB container. All can be overridden by env vars.
+MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "2800"))
+MAX_UPTIME_SECONDS = int(os.getenv("WATCHDOG_MAX_UPTIME_SECONDS", str(6 * 60 * 60)))
+WATCHDOG_INTERVAL_SECONDS = int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "10"))
+IDLE_GRACE_SECONDS = int(os.getenv("WATCHDOG_IDLE_GRACE_SECONDS", "15"))
+
+llama_busy = threading.Event()
+activity_lock = threading.Lock()
+last_activity_at = time.monotonic()
+
 
 def log(msg: str) -> None:
     print(f"[novelforge] {msg}", flush=True)
+
+
+def mark_activity(busy: bool) -> None:
+    global last_activity_at
+    if busy:
+        llama_busy.set()
+    else:
+        llama_busy.clear()
+    with activity_lock:
+        last_activity_at = time.monotonic()
+
+
+def seconds_since_activity() -> float:
+    with activity_lock:
+        return time.monotonic() - last_activity_at
+
+
+def current_container_memory_mb() -> float | None:
+    """Read cgroup memory so the watchdog roughly follows the hosting panel."""
+    candidates = [
+        Path("/sys/fs/cgroup/memory.current"),
+        Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+    ]
+    for path in candidates:
+        try:
+            raw = path.read_text().strip()
+            if raw and raw != "max":
+                return int(raw) / (1024 * 1024)
+        except (OSError, ValueError):
+            pass
+    return None
 
 
 def download(url: str, dest: Path) -> None:
@@ -148,11 +188,20 @@ def wait_for_local_server(port: int, process: subprocess.Popen, timeout: int = 1
     raise RuntimeError("Timed out waiting for llama-server to become reachable")
 
 
-def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Event | None = None) -> None:
+def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Event | None = None, track_llama: bool = False) -> None:
     assert process.stdout is not None
     for raw in process.stdout:
         line = raw.rstrip("\r\n")
         print(f"[{prefix}] {line}", flush=True)
+
+        if track_llama:
+            lower = line.lower()
+            # --parallel 1 means a boolean busy flag is sufficient.
+            if "launch_slot" in lower or "processing task" in lower:
+                mark_activity(True)
+            elif "slot release" in lower or "stop processing" in lower:
+                mark_activity(False)
+
         if url_event is not None:
             match = PUBLIC_URL_RE.search(line)
             if match:
@@ -165,14 +214,8 @@ def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Eve
                 url_event.set()
 
 
-def main() -> None:
-    log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}")
-    log("benchmark profile: 1 slot / 2 threads / prompt cache enabled / 16K context")
-    ensure_model()
-    server = ensure_llama_server()
-    cloudflared = ensure_cloudflared()
-
-    llama_cmd = [
+def llama_command(server: Path) -> list[str]:
+    return [
         str(server),
         "-m", str(MODEL_FILE),
         "-c", CONTEXT,
@@ -183,53 +226,123 @@ def main() -> None:
         "--threads-batch", os.getenv("LLAMA_THREADS_BATCH", "2"),
         "--cache-reuse", os.getenv("LLAMA_CACHE_REUSE", "256"),
     ]
-    log("starting llama-server: " + " ".join(llama_cmd))
-    llama = subprocess.Popen(
-        llama_cmd,
+
+
+def start_llama(server: Path) -> subprocess.Popen:
+    mark_activity(False)
+    cmd = llama_command(server)
+    log("starting llama-server: " + " ".join(cmd))
+    process = subprocess.Popen(
+        cmd,
         env=runtime_env(server),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
     )
-    threading.Thread(target=pipe_output, args=(llama, "llama"), daemon=True).start()
+    threading.Thread(
+        target=pipe_output,
+        args=(process, "llama", None, True),
+        daemon=True,
+    ).start()
+    wait_for_local_server(int(PORT), process)
+    return process
 
-    tunnel = None
+
+def stop_process(process: subprocess.Popen, name: str, timeout: int = 20) -> None:
+    if process.poll() is not None:
+        return
+    log(f"stopping {name} cleanly")
+    process.terminate()
     try:
-        wait_for_local_server(int(PORT), llama)
-        tunnel_cmd = [
-            str(cloudflared),
-            "tunnel",
-            "--no-autoupdate",
-            "--url", f"http://127.0.0.1:{PORT}",
-        ]
-        log("starting cloudflared Quick Tunnel")
-        tunnel = subprocess.Popen(
-            tunnel_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        url_event = threading.Event()
-        threading.Thread(target=pipe_output, args=(tunnel, "cloudflared", url_event), daemon=True).start()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log(f"{name} did not stop in time; killing it")
+        process.kill()
+        process.wait(timeout=5)
 
-        if not url_event.wait(timeout=60):
-            log("WARNING: no trycloudflare.com URL detected within 60 seconds; tunnel may still be connecting")
 
+def main() -> None:
+    log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}")
+    log("profile: 1 slot / 2 threads / prompt cache / 16K context")
+    log(
+        "watchdog: recycle llama-server when container memory >= "
+        f"{MEMORY_RESTART_MB} MB or uptime >= {MAX_UPTIME_SECONDS // 3600}h; "
+        f"only after {IDLE_GRACE_SECONDS}s idle"
+    )
+
+    ensure_model()
+    server = ensure_llama_server()
+    cloudflared = ensure_cloudflared()
+
+    llama = start_llama(server)
+    llama_started_at = time.monotonic()
+
+    tunnel_cmd = [
+        str(cloudflared),
+        "tunnel",
+        "--no-autoupdate",
+        "--url", f"http://127.0.0.1:{PORT}",
+    ]
+    log("starting cloudflared Quick Tunnel")
+    tunnel = subprocess.Popen(
+        tunnel_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    url_event = threading.Event()
+    threading.Thread(target=pipe_output, args=(tunnel, "cloudflared", url_event), daemon=True).start()
+
+    if not url_event.wait(timeout=60):
+        log("WARNING: no trycloudflare.com URL detected within 60 seconds; tunnel may still be connecting")
+
+    last_defer_log = 0.0
+    try:
         while True:
-            llama_code = llama.poll()
-            tunnel_code = tunnel.poll()
-            if llama_code is not None:
-                raise RuntimeError(f"llama-server stopped with code {llama_code}")
-            if tunnel_code is not None:
-                raise RuntimeError(f"cloudflared stopped with code {tunnel_code}")
-            time.sleep(2)
+            if tunnel.poll() is not None:
+                raise RuntimeError(f"cloudflared stopped with code {tunnel.returncode}")
+
+            if llama.poll() is not None:
+                log(f"llama-server exited with code {llama.returncode}; restarting while keeping tunnel alive")
+                llama = start_llama(server)
+                llama_started_at = time.monotonic()
+                continue
+
+            mem_mb = current_container_memory_mb()
+            uptime = time.monotonic() - llama_started_at
+            memory_due = mem_mb is not None and mem_mb >= MEMORY_RESTART_MB
+            uptime_due = uptime >= MAX_UPTIME_SECONDS
+
+            if memory_due or uptime_due:
+                reason = (
+                    f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB"
+                    if memory_due and mem_mb is not None
+                    else f"uptime {uptime / 3600:.1f}h >= {MAX_UPTIME_SECONDS / 3600:.1f}h"
+                )
+                idle_for = seconds_since_activity()
+                if llama_busy.is_set() or idle_for < IDLE_GRACE_SECONDS:
+                    now = time.monotonic()
+                    if now - last_defer_log >= 30:
+                        log(f"watchdog wants recycle ({reason}) but Writer is busy/recently active; deferring")
+                        last_defer_log = now
+                else:
+                    log(f"watchdog recycle triggered: {reason}")
+                    stop_process(llama, "llama-server")
+                    # Cloudflared is intentionally left running, preserving the public URL.
+                    llama = start_llama(server)
+                    llama_started_at = time.monotonic()
+                    after_mb = current_container_memory_mb()
+                    if after_mb is not None:
+                        log(f"watchdog recycle complete; container memory now {after_mb:.0f} MB")
+                    else:
+                        log("watchdog recycle complete")
+
+            time.sleep(WATCHDOG_INTERVAL_SECONDS)
     finally:
-        if tunnel is not None and tunnel.poll() is None:
-            tunnel.terminate()
-        if llama.poll() is None:
-            llama.terminate()
+        stop_process(llama, "llama-server")
+        stop_process(tunnel, "cloudflared")
 
 
 if __name__ == "__main__":
