@@ -26,15 +26,16 @@ REGISTRY_SUPABASE_URL = os.getenv("WRITER_REGISTRY_SUPABASE_URL", "https://zlysb
 REGISTRY_PUBLISHABLE_KEY = os.getenv("WRITER_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_XPv2geOFiYwbkUxEZyqPiQ_1vBn4jmY")
 REGISTRY_TOKEN = os.getenv("WRITER_REGISTRY_TOKEN", "LRx1B_jPsdMe-LUx4f6DtMT9_Vxx8GB_0LLGalIVCtQ")
 
-# 16K already reserves most of this small container. 2.8 GB was below normal idle usage,
-# so the old watchdog immediately recycled a healthy server forever.
-MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "3200"))
-MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "3000"))
+# Normal recycle waits for the Writer to become idle. Emergency recycle does not:
+# it is preferable to abort one request than let the hosting platform OOM-kill the whole container.
+MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "3000"))
+MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "2600"))
+MEMORY_EMERGENCY_MB = int(os.getenv("WATCHDOG_EMERGENCY_MB", "3250"))
 MAX_UPTIME_SECONDS = int(os.getenv("WATCHDOG_MAX_UPTIME_SECONDS", str(6 * 60 * 60)))
-WATCHDOG_INTERVAL_SECONDS = int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "10"))
-IDLE_GRACE_SECONDS = int(os.getenv("WATCHDOG_IDLE_GRACE_SECONDS", "15"))
-RESTART_COOLDOWN_SECONDS = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "180"))
-STARTUP_MEMORY_GRACE_SECONDS = int(os.getenv("WATCHDOG_STARTUP_GRACE_SECONDS", "300"))
+WATCHDOG_INTERVAL_SECONDS = int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "5"))
+IDLE_GRACE_SECONDS = int(os.getenv("WATCHDOG_IDLE_GRACE_SECONDS", "12"))
+RESTART_COOLDOWN_SECONDS = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "120"))
+STARTUP_MEMORY_GRACE_SECONDS = int(os.getenv("WATCHDOG_STARTUP_GRACE_SECONDS", "180"))
 
 llama_busy = threading.Event()
 activity_lock = threading.Lock()
@@ -142,7 +143,7 @@ def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
 
 def main()->None:
     log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}")
-    log(f"watchdog: restart >= {MEMORY_RESTART_MB} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s, cooldown {RESTART_COOLDOWN_SECONDS}s")
+    log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {MEMORY_EMERGENCY_MB} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
     ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True
     tunnel=subprocess.Popen([str(cloudflared),"tunnel","--no-autoupdate","--url",f"http://127.0.0.1:{PORT}"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); url_event=threading.Event(); threading.Thread(target=pipe_output,args=(tunnel,"cloudflared",url_event),daemon=True).start(); url_event.wait(timeout=60)
     last_defer_log=0.0
@@ -155,15 +156,23 @@ def main()->None:
             if mem_mb is not None and mem_mb<=MEMORY_REARM_MB and not memory_armed:
                 memory_armed=True; log(f"watchdog memory re-armed at {mem_mb:.0f} MB")
             past_startup_grace = uptime >= STARTUP_MEMORY_GRACE_SECONDS
+            emergency_due = past_startup_grace and mem_mb is not None and mem_mb >= MEMORY_EMERGENCY_MB
             memory_due=memory_armed and past_startup_grace and mem_mb is not None and mem_mb>=MEMORY_RESTART_MB and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
             uptime_due=uptime>=MAX_UPTIME_SECONDS and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
-            if memory_due or uptime_due:
-                reason=f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB" if memory_due and mem_mb is not None else f"uptime {uptime/3600:.1f}h"
-                idle_for=seconds_since_activity()
-                if llama_busy.is_set() or idle_for<IDLE_GRACE_SECONDS:
-                    if now-last_defer_log>=30: log(f"watchdog wants recycle ({reason}) but Writer is busy/recently active; deferring"); last_defer_log=now
+            if emergency_due or memory_due or uptime_due:
+                if emergency_due and mem_mb is not None:
+                    reason=f"EMERGENCY memory {mem_mb:.0f} MB >= {MEMORY_EMERGENCY_MB} MB"
+                elif memory_due and mem_mb is not None:
+                    reason=f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB"
                 else:
-                    log(f"watchdog recycle triggered: {reason}"); memory_armed=False; stop_process(llama,"llama-server"); time.sleep(3)
+                    reason=f"uptime {uptime/3600:.1f}h"
+                idle_for=seconds_since_activity()
+                if not emergency_due and (llama_busy.is_set() or idle_for<IDLE_GRACE_SECONDS):
+                    if now-last_defer_log>=20: log(f"watchdog wants recycle ({reason}) but Writer is busy/recently active; deferring"); last_defer_log=now
+                else:
+                    if emergency_due and llama_busy.is_set(): log(f"watchdog {reason}; aborting active generation to prevent container OOM")
+                    else: log(f"watchdog recycle triggered: {reason}")
+                    memory_armed=False; stop_process(llama,"llama-server"); time.sleep(3)
                     try:
                         llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; after=current_container_memory_mb(); log(f"watchdog recycle complete; memory {after:.0f} MB" if after is not None else "watchdog recycle complete")
                     except Exception as exc:
