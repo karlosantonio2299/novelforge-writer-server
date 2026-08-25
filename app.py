@@ -25,12 +25,17 @@ PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
 REGISTRY_SUPABASE_URL = os.getenv("WRITER_REGISTRY_SUPABASE_URL", "https://zlysbimnzsaovkrgckgk.supabase.co")
 REGISTRY_PUBLISHABLE_KEY = os.getenv("WRITER_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_XPv2geOFiYwbkUxEZyqPiQ_1vBn4jmY")
 REGISTRY_TOKEN = os.getenv("WRITER_REGISTRY_TOKEN", "LRx1B_jPsdMe-LUx4f6DtMT9_Vxx8GB_0LLGalIVCtQ")
-MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "2800"))
-MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "2500"))
+
+# 16K already reserves most of this small container. 2.8 GB was below normal idle usage,
+# so the old watchdog immediately recycled a healthy server forever.
+MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "3200"))
+MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "3000"))
 MAX_UPTIME_SECONDS = int(os.getenv("WATCHDOG_MAX_UPTIME_SECONDS", str(6 * 60 * 60)))
 WATCHDOG_INTERVAL_SECONDS = int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "10"))
 IDLE_GRACE_SECONDS = int(os.getenv("WATCHDOG_IDLE_GRACE_SECONDS", "15"))
 RESTART_COOLDOWN_SECONDS = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "180"))
+STARTUP_MEMORY_GRACE_SECONDS = int(os.getenv("WATCHDOG_STARTUP_GRACE_SECONDS", "300"))
+
 llama_busy = threading.Event()
 activity_lock = threading.Lock()
 last_activity_at = time.monotonic()
@@ -137,19 +142,20 @@ def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
 
 def main()->None:
     log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}")
-    log(f"watchdog: restart >= {MEMORY_RESTART_MB} MB, re-arm <= {MEMORY_REARM_MB} MB, cooldown {RESTART_COOLDOWN_SECONDS}s")
-    ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=0.0; memory_armed=True
+    log(f"watchdog: restart >= {MEMORY_RESTART_MB} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s, cooldown {RESTART_COOLDOWN_SECONDS}s")
+    ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True
     tunnel=subprocess.Popen([str(cloudflared),"tunnel","--no-autoupdate","--url",f"http://127.0.0.1:{PORT}"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); url_event=threading.Event(); threading.Thread(target=pipe_output,args=(tunnel,"cloudflared",url_event),daemon=True).start(); url_event.wait(timeout=60)
     last_defer_log=0.0
     try:
         while True:
             if tunnel.poll() is not None: raise RuntimeError(f"cloudflared stopped with code {tunnel.returncode}")
             if llama.poll() is not None:
-                log(f"llama-server exited with code {llama.returncode}; restarting while keeping tunnel alive"); time.sleep(2); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=time.monotonic(); continue
+                log(f"llama-server exited with code {llama.returncode}; restarting while keeping tunnel alive"); time.sleep(2); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True; continue
             mem_mb=current_container_memory_mb(); now=time.monotonic(); uptime=now-llama_started_at
             if mem_mb is not None and mem_mb<=MEMORY_REARM_MB and not memory_armed:
                 memory_armed=True; log(f"watchdog memory re-armed at {mem_mb:.0f} MB")
-            memory_due=memory_armed and mem_mb is not None and mem_mb>=MEMORY_RESTART_MB and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
+            past_startup_grace = uptime >= STARTUP_MEMORY_GRACE_SECONDS
+            memory_due=memory_armed and past_startup_grace and mem_mb is not None and mem_mb>=MEMORY_RESTART_MB and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
             uptime_due=uptime>=MAX_UPTIME_SECONDS and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
             if memory_due or uptime_due:
                 reason=f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB" if memory_due and mem_mb is not None else f"uptime {uptime/3600:.1f}h"
@@ -159,11 +165,9 @@ def main()->None:
                 else:
                     log(f"watchdog recycle triggered: {reason}"); memory_armed=False; stop_process(llama,"llama-server"); time.sleep(3)
                     try:
-                        llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=time.monotonic(); after=current_container_memory_mb(); log(f"watchdog recycle complete; memory {after:.0f} MB" if after is not None else "watchdog recycle complete")
+                        llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; after=current_container_memory_mb(); log(f"watchdog recycle complete; memory {after:.0f} MB" if after is not None else "watchdog recycle complete")
                     except Exception as exc:
-                        log(f"watchdog restart failed: {exc}; supervisor will retry")
-                        time.sleep(5)
-                        llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=time.monotonic()
+                        log(f"watchdog restart failed: {exc}; supervisor will retry"); time.sleep(5); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at
             time.sleep(WATCHDOG_INTERVAL_SECONDS)
     finally:
         stop_process(llama,"llama-server"); stop_process(tunnel,"cloudflared")
