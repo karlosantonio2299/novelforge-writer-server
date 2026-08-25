@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -21,6 +22,12 @@ CONTEXT = os.getenv("N_CTX", "16384")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
+
+# Storyforge Writer registry. Defaults point at the current Storyforge Supabase project;
+# all values can still be overridden from the hosting panel if needed.
+REGISTRY_SUPABASE_URL = os.getenv("WRITER_REGISTRY_SUPABASE_URL", "https://zlysbimnzsaovkrgckgk.supabase.co")
+REGISTRY_PUBLISHABLE_KEY = os.getenv("WRITER_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_XPv2geOFiYwbkUxEZyqPiQ_1vBn4jmY")
+REGISTRY_TOKEN = os.getenv("WRITER_REGISTRY_TOKEN", "LRx1B_jPsdMe-LUx4f6DtMT9_Vxx8GB_0LLGalIVCtQ")
 
 # Safe recycle defaults for a ~3.3 GB container. All can be overridden by env vars.
 MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "2800"))
@@ -66,6 +73,30 @@ def current_container_memory_mb() -> float | None:
         except (OSError, ValueError):
             pass
     return None
+
+
+def register_public_url(public_url: str) -> None:
+    """Publish the current Quick Tunnel URL so Storyforge can discover it automatically."""
+    try:
+        endpoint = f"{REGISTRY_SUPABASE_URL.rstrip('/')}/rest/v1/rpc/register_writer_endpoint"
+        body = json.dumps({"p_token": REGISTRY_TOKEN, "p_endpoint_url": public_url}).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "apikey": REGISTRY_PUBLISHABLE_KEY,
+                "Authorization": f"Bearer {REGISTRY_PUBLISHABLE_KEY}",
+                "User-Agent": "NovelForge-Writer-Registry/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as response:
+            response.read()
+        log(f"Storyforge registry updated: {public_url}")
+        log("Storyforge can now discover this Writer automatically; no URL copy/paste needed.")
+    except Exception as exc:
+        log(f"WARNING: could not update Storyforge Writer registry: {exc}")
 
 
 def download(url: str, dest: Path) -> None:
@@ -209,8 +240,9 @@ def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Eve
                 log("=" * 72)
                 log(f"PUBLIC WRITER URL: {public_url}")
                 log(f"OPENAI API: {public_url}/v1/chat/completions")
-                log("Copy PUBLIC WRITER URL into NovelForge Writer Lab.")
+                log("Publishing URL to Storyforge registry automatically...")
                 log("=" * 72)
+                threading.Thread(target=register_public_url, args=(public_url,), daemon=True).start()
                 url_event.set()
 
 
