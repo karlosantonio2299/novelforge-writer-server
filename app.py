@@ -16,16 +16,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
-MODEL_FILE = MODEL_DIR / "Qwen3-1.7B-Q3_K_L.gguf"
-HF_MODEL_URL = "https://huggingface.co/exebr/novelforge-qwen3-1.7b-q3/resolve/main/Qwen3-1.7B-Q3_K_L.gguf?download=true"
-# NovelForge routes compact canon/state instead of whole chapters. 8K leaves generous room
-# while avoiding the much larger KV reservation of the old 16K setup.
-CONTEXT = os.getenv("N_CTX", "8192")
-# llama.cpp defaults are optimized for much larger machines (batch 2048 / ubatch 512).
-# The Writer's prompts are compact, so bounded buffers reduce transient RAM on this 2-core box.
-# Both remain overrideable for benchmarking on larger hosts.
-BATCH_SIZE = os.getenv("LLAMA_BATCH", "768")
-UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "256")
+
+# Model tournament defaults. These can be overridden from the host without another code change.
+# Current challenger: Qwen2.5-3B-Instruct Q3_K_M (~1.72 GB GGUF).
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "qwen2.5-3b-instruct-q3_k_m.gguf")
+MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
+HF_MODEL_URL = os.getenv(
+    "HF_MODEL_URL",
+    "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q3_k_m.gguf?download=true",
+)
+
+# The 3B challenger gets a 4K context first so KV cache + runtime have breathing room on
+# the ~3.3 GiB host. NovelForge already routes compact canon/state instead of full chapters.
+CONTEXT = os.getenv("N_CTX", "4096")
+# Conservative batch buffers for the 3B test. All values remain overrideable for benchmarks.
+BATCH_SIZE = os.getenv("LLAMA_BATCH", "512")
+UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "128")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
@@ -93,7 +99,7 @@ def register_public_url(public_url: str) -> None:
     except Exception as exc: log(f"WARNING: could not update Storyforge Writer registry: {exc}")
 def download(url: str,dest: Path)->None:
     dest.parent.mkdir(parents=True,exist_ok=True); tmp=dest.with_suffix(dest.suffix+".part"); tmp.unlink(missing_ok=True); log(f"downloading {url}"); req=urllib.request.Request(url,headers={"User-Agent":"NovelForge-Writer-Server/1.0"})
-    with urllib.request.urlopen(req,timeout=180) as src,open(tmp,"wb") as out: shutil.copyfileobj(src,out)
+    with urllib.request.urlopen(req,timeout=300) as src,open(tmp,"wb") as out: shutil.copyfileobj(src,out)
     tmp.replace(dest)
 def detect_arch()->str:
     m=platform.machine().lower()
@@ -124,8 +130,10 @@ def runtime_env(server:Path)->dict[str,str]:
     env["LD_LIBRARY_PATH"]=":".join(sorted(dirs)); return env
 def ensure_model()->None:
     MODEL_DIR.mkdir(parents=True,exist_ok=True)
-    if MODEL_FILE.exists() and MODEL_FILE.stat().st_size>500_000_000: log(f"model already present: {MODEL_FILE.name}"); return
+    if MODEL_FILE.exists() and MODEL_FILE.stat().st_size>500_000_000: log(f"model already present: {MODEL_FILE.name} ({MODEL_FILE.stat().st_size/(1024**3):.2f} GiB)"); return
+    log(f"selected model: {MODEL_FILE.name}")
     download(HF_MODEL_URL,MODEL_FILE)
+    log(f"model download complete: {MODEL_FILE.name} ({MODEL_FILE.stat().st_size/(1024**3):.2f} GiB)")
 def ensure_cloudflared()->Path:
     BIN_DIR.mkdir(parents=True,exist_ok=True); binary=BIN_DIR/"cloudflared"
     if binary.exists() and binary.stat().st_size>5_000_000: binary.chmod(binary.stat().st_mode|stat.S_IEXEC); return binary
@@ -160,7 +168,7 @@ def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
     try: process.wait(timeout=timeout)
     except subprocess.TimeoutExpired: log(f"{name} did not stop in time; killing it"); process.kill(); process.wait(timeout=5)
 def main()->None:
-    emergency=effective_emergency_mb(); log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT} batch={BATCH_SIZE} ubatch={UBATCH_SIZE}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {emergency} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
+    emergency=effective_emergency_mb(); log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} model={MODEL_FILE.name} ctx={CONTEXT} batch={BATCH_SIZE} ubatch={UBATCH_SIZE}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {emergency} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
     ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True; log_kernel_memory()
     tunnel=subprocess.Popen([str(cloudflared),"tunnel","--no-autoupdate","--url",f"http://127.0.0.1:{PORT}"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); url_event=threading.Event(); threading.Thread(target=pipe_output,args=(tunnel,"cloudflared",url_event),daemon=True).start(); url_event.wait(timeout=60); last_defer_log=0.0
     try:
