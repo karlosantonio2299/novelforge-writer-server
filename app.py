@@ -18,7 +18,10 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 MODEL_FILE = MODEL_DIR / "Qwen3-1.7B-Q3_K_L.gguf"
 HF_MODEL_URL = "https://huggingface.co/exebr/novelforge-qwen3-1.7b-q3/resolve/main/Qwen3-1.7B-Q3_K_L.gguf?download=true"
-CONTEXT = os.getenv("N_CTX", "16384")
+# NovelForge now routes compact canon/state instead of whole chapters. 8K is ample for the
+# active prompt and saves a large KV-cache reservation on this 2-core / ~3.6 GiB container.
+# N_CTX can still override this without a code change if a larger deployment is used later.
+CONTEXT = os.getenv("N_CTX", "8192")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
@@ -26,7 +29,7 @@ REGISTRY_SUPABASE_URL = os.getenv("WRITER_REGISTRY_SUPABASE_URL", "https://zlysb
 REGISTRY_PUBLISHABLE_KEY = os.getenv("WRITER_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_XPv2geOFiYwbkUxEZyqPiQ_1vBn4jmY")
 REGISTRY_TOKEN = os.getenv("WRITER_REGISTRY_TOKEN", "LRx1B_jPsdMe-LUx4f6DtMT9_Vxx8GB_0LLGalIVCtQ")
 MEMORY_RESTART_MB = int(os.getenv("WATCHDOG_MEMORY_MB", "3000"))
-MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "2600"))
+MEMORY_REARM_MB = int(os.getenv("WATCHDOG_MEMORY_REARM_MB", "2450"))
 MEMORY_EMERGENCY_MB = int(os.getenv("WATCHDOG_EMERGENCY_MB", "3250"))
 MAX_UPTIME_SECONDS = int(os.getenv("WATCHDOG_MAX_UPTIME_SECONDS", str(6 * 60 * 60)))
 WATCHDOG_INTERVAL_SECONDS = int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "5"))
@@ -61,21 +64,22 @@ def container_memory_limit_mb() -> float | None:
     if not raw or raw == "max": return None
     try:
         value = int(raw)
-        # cgroup v1 sometimes exposes a huge sentinel instead of the word 'max'.
         if value >= (1 << 60): return None
         return value/(1024*1024)
     except ValueError: return None
 
+def effective_emergency_mb() -> int:
+    limit=container_memory_limit_mb()
+    if limit is None:return MEMORY_EMERGENCY_MB
+    return min(MEMORY_EMERGENCY_MB,max(512,int(limit*.90)))
+
 def log_kernel_memory() -> None:
-    current = current_container_memory_mb(); limit = container_memory_limit_mb()
+    current = current_container_memory_mb(); limit = container_memory_limit_mb(); emergency=effective_emergency_mb()
     current_text = f"{current:.0f} MB" if current is not None else "unknown"
     limit_text = f"{limit:.0f} MB ({limit/1024:.2f} GiB)" if limit is not None else "UNLIMITED / host-managed"
     log(f"kernel cgroup memory: current={current_text}, hard_limit={limit_text}")
-    if limit is not None:
-        emergency = min(MEMORY_EMERGENCY_MB, max(256, int(limit * 0.94)))
-        log(f"kernel headroom at startup: {max(0, limit-(current or 0)):.0f} MB; configured emergency={MEMORY_EMERGENCY_MB} MB; suggested ceiling~{emergency} MB")
-    else:
-        log("kernel reports no finite cgroup RAM limit; hosting panel allocation may be a soft/accounting value")
+    if limit is not None: log(f"kernel headroom: {max(0, limit-(current or 0)):.0f} MB; effective emergency={emergency} MB ({emergency/limit*100:.0f}% of hard limit)")
+    else: log("kernel reports no finite cgroup RAM limit; hosting panel allocation may be a soft/accounting value")
 
 def register_public_url(public_url: str) -> None:
     try:
@@ -142,7 +146,8 @@ def pipe_output(process:subprocess.Popen,prefix:str,url_event:threading.Event|No
             match=PUBLIC_URL_RE.search(line)
             if match:
                 public_url=match.group(0); log("="*72); log(f"PUBLIC WRITER URL: {public_url}"); log(f"OPENAI API: {public_url}/v1/chat/completions"); log("="*72); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
-def llama_command(server:Path)->list[str]: return [str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",os.getenv("LLAMA_THREADS","2"),"--threads-batch",os.getenv("LLAMA_THREADS_BATCH","2"),"--cache-reuse",os.getenv("LLAMA_CACHE_REUSE","256")]
+def llama_command(server:Path)->list[str]:
+    return [str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",os.getenv("LLAMA_THREADS","2"),"--threads-batch",os.getenv("LLAMA_THREADS_BATCH","2"),"--cache-reuse",os.getenv("LLAMA_CACHE_REUSE","256")]
 def start_llama(server:Path)->subprocess.Popen:
     mark_activity(False); cmd=llama_command(server); log("starting llama-server: "+" ".join(cmd)); p=subprocess.Popen(cmd,env=runtime_env(server),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); threading.Thread(target=pipe_output,args=(p,"llama",None,True),daemon=True).start(); wait_for_local_server(int(PORT),p); return p
 def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
@@ -151,18 +156,18 @@ def stop_process(process:subprocess.Popen,name:str,timeout:int=20)->None:
     try: process.wait(timeout=timeout)
     except subprocess.TimeoutExpired: log(f"{name} did not stop in time; killing it"); process.kill(); process.wait(timeout=5)
 def main()->None:
-    log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {MEMORY_EMERGENCY_MB} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
+    emergency=effective_emergency_mb(); log(f"python={sys.version.split()[0]} arch={platform.machine()} port={PORT} ctx={CONTEXT}"); log_kernel_memory(); log(f"watchdog: normal >= {MEMORY_RESTART_MB} MB, emergency >= {emergency} MB, re-arm <= {MEMORY_REARM_MB} MB, startup grace {STARTUP_MEMORY_GRACE_SECONDS}s")
     ensure_model(); server=ensure_llama_server(); cloudflared=ensure_cloudflared(); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True; log_kernel_memory()
     tunnel=subprocess.Popen([str(cloudflared),"tunnel","--no-autoupdate","--url",f"http://127.0.0.1:{PORT}"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1); url_event=threading.Event(); threading.Thread(target=pipe_output,args=(tunnel,"cloudflared",url_event),daemon=True).start(); url_event.wait(timeout=60); last_defer_log=0.0
     try:
         while True:
             if tunnel.poll() is not None: raise RuntimeError(f"cloudflared stopped with code {tunnel.returncode}")
             if llama.poll() is not None: log(f"llama-server exited with code {llama.returncode}; restarting while keeping tunnel alive"); time.sleep(2); llama=start_llama(server); llama_started_at=time.monotonic(); last_restart_at=llama_started_at; memory_armed=True; log_kernel_memory(); continue
-            mem_mb=current_container_memory_mb(); now=time.monotonic(); uptime=now-llama_started_at
+            mem_mb=current_container_memory_mb(); now=time.monotonic(); uptime=now-llama_started_at; emergency=effective_emergency_mb()
             if mem_mb is not None and mem_mb<=MEMORY_REARM_MB and not memory_armed: memory_armed=True; log(f"watchdog memory re-armed at {mem_mb:.0f} MB")
-            past_startup_grace=uptime>=STARTUP_MEMORY_GRACE_SECONDS; emergency_due=past_startup_grace and mem_mb is not None and mem_mb>=MEMORY_EMERGENCY_MB; memory_due=memory_armed and past_startup_grace and mem_mb is not None and mem_mb>=MEMORY_RESTART_MB and now-last_restart_at>=RESTART_COOLDOWN_SECONDS; uptime_due=uptime>=MAX_UPTIME_SECONDS and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
+            past_startup_grace=uptime>=STARTUP_MEMORY_GRACE_SECONDS; emergency_due=past_startup_grace and mem_mb is not None and mem_mb>=emergency; memory_due=memory_armed and past_startup_grace and mem_mb is not None and mem_mb>=MEMORY_RESTART_MB and now-last_restart_at>=RESTART_COOLDOWN_SECONDS; uptime_due=uptime>=MAX_UPTIME_SECONDS and now-last_restart_at>=RESTART_COOLDOWN_SECONDS
             if emergency_due or memory_due or uptime_due:
-                reason=f"EMERGENCY memory {mem_mb:.0f} MB >= {MEMORY_EMERGENCY_MB} MB" if emergency_due and mem_mb is not None else (f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB" if memory_due and mem_mb is not None else f"uptime {uptime/3600:.1f}h"); idle_for=seconds_since_activity()
+                reason=f"EMERGENCY memory {mem_mb:.0f} MB >= {emergency} MB" if emergency_due and mem_mb is not None else (f"memory {mem_mb:.0f} MB >= {MEMORY_RESTART_MB} MB" if memory_due and mem_mb is not None else f"uptime {uptime/3600:.1f}h"); idle_for=seconds_since_activity()
                 if not emergency_due and (llama_busy.is_set() or idle_for<IDLE_GRACE_SECONDS):
                     if now-last_defer_log>=20: log(f"watchdog wants recycle ({reason}) but Writer is busy/recently active; deferring"); last_defer_log=now
                 else:
