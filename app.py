@@ -18,11 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate B: Qwen2.5 Coder 1.5B Instruct abliterated/uncensored, Q4_K_M (~1.12 GB).
-# Chosen to test whether stronger structural instruction-following improves beat/checkpoint execution.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-Coder-1.5B-Instruct-abliterated-Q4_K_M.gguf")
+# Candidate C: Huihui Qwen3 1.7B abliterated v2, Q4_K_M (~1.11 GB).
+# This is a newer ablation of Qwen3 1.7B and is explicitly marked uncensored/abliterated.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Huihui-Qwen3-1.7B-abliterated-v2.Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-abliterated-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-abliterated-Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Huihui-Qwen3-1.7B-abliterated-v2-GGUF/resolve/main/Huihui-Qwen3-1.7B-abliterated-v2.Q4_K_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
