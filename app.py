@@ -18,8 +18,8 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed profile.
-# Qwen3-1.7B Q4_K_M is smaller than the old Qwen2.5-3B Q3 model while keeping
-# a materially better quantization. Every value can still be overridden by host env.
+# The 1.7B model remains the target/final writer. A tiny Qwen3 model can act as
+# a speculative draft so the target verifies several likely tokens per batch.
 MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen3-1.7B-Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
 HF_MODEL_URL = os.getenv(
@@ -27,9 +27,19 @@ HF_MODEL_URL = os.getenv(
     "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true",
 )
 
+SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "1").strip().lower() not in {"0", "false", "off", "no"}
+DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
+DRAFT_MODEL_FILE = MODEL_DIR / Path(DRAFT_MODEL_FILENAME).name
+DRAFT_HF_MODEL_URL = os.getenv(
+    "DRAFT_HF_MODEL_URL",
+    "https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf?download=true",
+)
+SPEC_DRAFT_N_MAX = os.getenv("LLAMA_SPEC_DRAFT_N_MAX", "4")
+SPEC_DRAFT_P_MIN = os.getenv("LLAMA_SPEC_DRAFT_P_MIN", "0.10")
+
 CONTEXT = os.getenv("N_CTX", "4096")
 BATCH_SIZE = os.getenv("LLAMA_BATCH", "512")
-UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "256")
+UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "512")
 CACHE_REUSE = os.getenv("LLAMA_CACHE_REUSE", "512")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
@@ -112,7 +122,6 @@ def effective_cpu_count() -> int:
     host = max(1, os.cpu_count() or 1)
     quota_count = host
 
-    # cgroup v2: "quota period", e.g. "200000 100000" => 2 CPUs.
     raw = _read_cgroup_value([Path("/sys/fs/cgroup/cpu.max")])
     if raw:
         parts = raw.split()
@@ -124,7 +133,6 @@ def effective_cpu_count() -> int:
             except ValueError:
                 pass
     else:
-        # cgroup v1 fallback.
         q = _read_cgroup_value([Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")])
         p = _read_cgroup_value([Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")])
         try:
@@ -143,7 +151,6 @@ def selected_threads() -> int:
             return max(1, int(override))
         except ValueError:
             pass
-    # Personal-use writer: cap at 4 to avoid bandwidth contention on shared hosts.
     return min(4, effective_cpu_count())
 
 
@@ -174,6 +181,7 @@ def log_resources() -> None:
     if limit is not None:
         log(f"kernel headroom: {max(0, limit - (current or 0)):.0f} MB; effective emergency={emergency} MB ({emergency / limit * 100:.0f}% of hard limit)")
     log(f"cpu: host={os.cpu_count() or 1}, effective={effective_cpu_count()}, llama_threads={selected_threads()}, batch_threads={selected_batch_threads()}")
+    log(f"speculative draft: {'ON' if SPEC_DRAFT_ENABLED else 'OFF'}" + (f", model={DRAFT_MODEL_FILE.name}, n_max={SPEC_DRAFT_N_MAX}, p_min={SPEC_DRAFT_P_MIN}" if SPEC_DRAFT_ENABLED else ""))
 
 
 def register_public_url(public_url: str) -> None:
@@ -270,14 +278,20 @@ def runtime_env(server: Path) -> dict[str, str]:
     return env
 
 
-def ensure_model() -> None:
+def ensure_model_file(path: Path, url: str, min_bytes: int, label: str) -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    if MODEL_FILE.exists() and MODEL_FILE.stat().st_size > 500_000_000:
-        log(f"model already present: {MODEL_FILE.name} ({MODEL_FILE.stat().st_size / (1024 ** 3):.2f} GiB)")
+    if path.exists() and path.stat().st_size > min_bytes:
+        log(f"{label} already present: {path.name} ({path.stat().st_size / (1024 ** 3):.2f} GiB)")
         return
-    log(f"selected model: {MODEL_FILE.name}")
-    download(HF_MODEL_URL, MODEL_FILE)
-    log(f"model download complete: {MODEL_FILE.name} ({MODEL_FILE.stat().st_size / (1024 ** 3):.2f} GiB)")
+    log(f"selected {label}: {path.name}")
+    download(url, path)
+    log(f"{label} download complete: {path.name} ({path.stat().st_size / (1024 ** 3):.2f} GiB)")
+
+
+def ensure_model() -> None:
+    ensure_model_file(MODEL_FILE, HF_MODEL_URL, 500_000_000, "target model")
+    if SPEC_DRAFT_ENABLED:
+        ensure_model_file(DRAFT_MODEL_FILE, DRAFT_HF_MODEL_URL, 300_000_000, "draft model")
 
 
 def ensure_cloudflared() -> Path:
@@ -332,7 +346,7 @@ def pipe_output(process: subprocess.Popen, prefix: str, url_event: threading.Eve
 
 
 def llama_command(server: Path) -> list[str]:
-    return [
+    cmd = [
         str(server),
         "-m", str(MODEL_FILE),
         "-c", CONTEXT,
@@ -345,6 +359,16 @@ def llama_command(server: Path) -> list[str]:
         "--ubatch-size", UBATCH_SIZE,
         "--cache-reuse", CACHE_REUSE,
     ]
+    if SPEC_DRAFT_ENABLED:
+        cmd += [
+            "--spec-type", "draft-simple",
+            "--spec-draft-model", str(DRAFT_MODEL_FILE),
+            "--spec-draft-n-max", SPEC_DRAFT_N_MAX,
+            "--spec-draft-p-min", SPEC_DRAFT_P_MIN,
+            "--spec-draft-threads", str(selected_threads()),
+            "--spec-draft-threads-batch", str(selected_batch_threads()),
+        ]
+    return cmd
 
 
 def start_llama(server: Path) -> subprocess.Popen:
