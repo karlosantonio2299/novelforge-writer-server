@@ -18,11 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate D: Ektome Qwen2.5 1.5B PristinelyUncensored, Q4_K_M (~986 MB).
-# Distinct uncensored fine-tune with corrected GGUF chat template; chosen before Phi due host speed budget.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Ektome-Qwen2.5-1.5Bi-Q4_K_M.gguf")
+# Candidate E: Phi-3.5 Mini Instruct Uncensored, IQ3_M (~1.86 GB).
+# Distinct 3.8B family; IQ3_M chosen as the best quality/speed compromise that still fits the host budget.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Phi-3.5-mini-instruct_Uncensored-IQ3_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Zynerji/Ektome-Qwen2.5-1.5Bi-PristinelyUncensored/resolve/main/Ektome-Qwen2.5-1.5Bi-Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/bartowski/Phi-3.5-mini-instruct_Uncensored-GGUF/resolve/main/Phi-3.5-mini-instruct_Uncensored-IQ3_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
