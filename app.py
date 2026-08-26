@@ -18,10 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate: Qwen3 1.7B uncensored/abliterated, Q4_K_M (~1.11 GiB).
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen3-1.7B-uncensored.Q4_K_M.gguf")
+# Candidate: Llama 3.2 3B Instruct abliterated/uncensored, Q3_K_M (~1.69 GiB).
+# Chosen to test stronger instruction-following while staying below the host memory ceiling.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Llama-3.2-3B-Instruct-abliterated.Q3_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Dzluck/Qwen3-1.7B-uncensored-GGUF/resolve/main/Qwen3-1.7B-uncensored.Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/QuantFactory/Llama-3.2-3B-Instruct-abliterated-GGUF/resolve/main/Llama-3.2-3B-Instruct-abliterated.Q3_K_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
