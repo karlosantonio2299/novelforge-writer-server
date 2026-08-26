@@ -17,10 +17,11 @@ ROOT = Path(__file__).resolve().parent
 BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
-# NovelForge personal-use speed profile.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen3-1.7B-Q4_K_M.gguf")
+# NovelForge personal-use speed/quality tournament profile.
+# Current candidate: Qwen2.5 1.5B uncensored Q4_K_M (~986 MB).
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "qwen2.5_1.5b_uncensored.Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/arzaan789/qwen2.5-1.5b-uncensored/resolve/main/qwen2.5_1.5b_uncensored.Q4_K_M.gguf?download=true")
 
 # Opt-in only. On the current 2-vCPU host a second draft model competes for the
 # same CPU/RAM, so stability/throughput must be proven before enabling it.
