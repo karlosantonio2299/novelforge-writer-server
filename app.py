@@ -18,12 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate: SmolLM2 1.7B Instruct Uncensored, Q4_K_M (~1.2 GB).
-# Q4_K_M is preferred over Q3_K_M here because the host already handled ~1.7 GB models
-# and prose/instruction quality matters more than saving a few hundred MB.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "SmolLM2-1.7B-Instruct-Uncensored.Q4_K_M.gguf")
+# Candidate A: Qwen2.5 1.5B Instruct abliterated/uncensored, imatrix Q4_K_M (~986 MB).
+# Chosen for a controlled instruction-following test while staying well inside the host budget.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-1.5B-Instruct-abliterated.i1-Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/SmolLM2-1.7B-Instruct-Uncensored-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Uncensored.Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Qwen2.5-1.5B-Instruct-abliterated-i1-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-abliterated.i1-Q4_K_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
