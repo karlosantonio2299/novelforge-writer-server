@@ -18,13 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Current candidate: Qwen2.5 1.5B uncensored Q4_K_M (~986 MB).
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "qwen2.5_1.5b_uncensored.Q4_K_M.gguf")
+# Candidate: Qwen2.5 1.5B Creative Writing + General Tasks, Q4_K_M.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters.Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/arzaan789/qwen2.5-1.5b-uncensored/resolve/main/qwen2.5_1.5b_uncensored.Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters-GGUF/resolve/main/Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters.Q4_K_M.gguf?download=true")
 
-# Opt-in only. On the current 2-vCPU host a second draft model competes for the
-# same CPU/RAM, so stability/throughput must be proven before enabling it.
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
 DRAFT_MODEL_FILE = MODEL_DIR / Path(DRAFT_MODEL_FILENAME).name
