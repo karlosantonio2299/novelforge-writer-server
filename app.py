@@ -18,10 +18,10 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate: Qwen2.5 1.5B Creative Writing + General Tasks, Q4_K_M.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters.Q4_K_M.gguf")
+# Candidate: Qwen3 1.7B uncensored/abliterated, Q4_K_M (~1.11 GiB).
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen3-1.7B-uncensored.Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters-GGUF/resolve/main/Qwen2.5-1.5B-Creative-Writing-and-General-Tasks-Distilled-8Clusters.Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Dzluck/Qwen3-1.7B-uncensored-GGUF/resolve/main/Qwen3-1.7B-uncensored.Q4_K_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
