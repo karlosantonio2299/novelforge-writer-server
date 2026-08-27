@@ -17,12 +17,13 @@ ROOT = Path(__file__).resolve().parent
 BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
-# NovelForge personal-use speed/quality tournament profile.
-# Candidate G: Llama 3.2 1B finetuned specifically for uncensored creative writing + RP.
-# Chosen as a genuinely prose-oriented candidate rather than another generic instruct/abliterated model.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Uncensored-1b-Creative_Writing_RP.gguf")
+# NovelForge personal-use final writer candidate.
+# Heretic Q25-1.5B-VeoLu: Qwen2.5-1.5B-Instruct foundation + dedicated writing,
+# roleplay, adventuring and reasoning finetunes, then Heretic decensoring.
+# Chosen to combine Qwen2.5-style instruction discipline with story-specialized prose while staying CPU-fast.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "heretic_Q25-1.5B-VeoLu.Q4_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Novaciano/Uncensored-1b-Creative_Writing_RP-GGUF/resolve/main/Uncensored-1b-Creative_Writing_RP.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/heretic_Q25-1.5B-VeoLu-GGUF/resolve/main/heretic_Q25-1.5B-VeoLu.Q4_K_M.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
