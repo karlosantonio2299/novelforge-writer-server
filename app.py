@@ -18,11 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use speed/quality tournament profile.
-# Candidate F: Qwen3.5 2B Abliterated, Q4_K_M (~1.27 GB).
-# New 2B family with low-KL abliteration; chosen for stronger instruction following within host budget.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen3.5-2B_Abliterated-Q4_K_M.gguf")
+# Candidate G: Llama 3.2 1B finetuned specifically for uncensored creative writing + RP.
+# Chosen as a genuinely prose-oriented candidate rather than another generic instruct/abliterated model.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Uncensored-1b-Creative_Writing_RP.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/SicariusSicariiStuff/Qwen3.5-2B_Abliterated_GGUF/resolve/main/Qwen3.5-2B_Abliterated-Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Novaciano/Uncensored-1b-Creative_Writing_RP-GGUF/resolve/main/Uncensored-1b-Creative_Writing_RP.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
@@ -176,7 +176,10 @@ def pipe_output(process,prefix,url_event=None,track_llama=False):
         if url_event is not None:
             match=PUBLIC_URL_RE.search(line)
             if match:
-                public_url=match.group(0); log(f"PUBLIC WRITER URL: {public_url}"); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
+                public_url=match.group(0)
+                if public_url.lower() == "https://api.trycloudflare.com":
+                    continue
+                log(f"PUBLIC WRITER URL: {public_url}"); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
 def llama_command(server):
     cmd=[str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",str(selected_threads()),"--threads-batch",str(selected_batch_threads()),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",CACHE_REUSE]
     if SPEC_DRAFT_ENABLED: cmd += ["--spec-type","draft-simple","--spec-draft-model",str(DRAFT_MODEL_FILE),"--spec-draft-n-max",SPEC_DRAFT_N_MAX,"--spec-draft-p-min",SPEC_DRAFT_P_MIN]
