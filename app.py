@@ -18,11 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use writer candidate for low-memory CPU hosting.
-# Aesir is a Llama 3.2 3B finetune aimed at RP/roleplay and uncensored/NSFW use,
-# which is a better fit for long-form fiction than a generic uncensored instruct model.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Llama-3.2-3b-NSFW_Aesir_Uncensored.gguf")
+# Llama 3.2 3B uncensored in Q3_K_S keeps the 3B class while cutting model
+# size to about 1.71 GB, which is friendlier to Enzonic's RAM and download speed.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "llama3.2-3b-uncensored-Q3_K_S.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Novaciano/Llama-3.2-3b-NSFW_Aesir_Uncensored-GGUF/resolve/main/Llama-3.2-3b-NSFW_Aesir_Uncensored.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/tensorblock/llama3.2-3b-uncensored-GGUF/resolve/main/llama3.2-3b-uncensored-Q3_K_S.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
@@ -39,7 +39,7 @@ UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "128")
 CACHE_REUSE = os.getenv("LLAMA_CACHE_REUSE", "256")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
-PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
+PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\\.trycloudflare\\.com", re.I)
 
 REGISTRY_SUPABASE_URL = os.getenv("WRITER_REGISTRY_SUPABASE_URL", "https://zlysbimnzsaovkrgckgk.supabase.co")
 REGISTRY_PUBLISHABLE_KEY = os.getenv("WRITER_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_XPv2geOFiYwbkUxEZyqPiQ_1vBn4jmY")
