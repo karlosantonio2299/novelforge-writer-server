@@ -18,11 +18,12 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use writer candidate for low-memory CPU hosting.
-# Llama 3.2 3B uncensored in Q3_K_S keeps the 3B class while staying light
-# enough for Enzonic. Use mradermacher's public GGUF mirror for reliable downloads.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Llama-3.2-3B-Uncensored.Q3_K_S.gguf")
+# Huihui Ministral 3B is abliterated/uncensored and explicitly aimed at
+# unrestricted creative writing/narrative generation while staying small enough
+# for the Enzonic container in Q3_K_M (~1.8 GB).
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Huihui-Ministral-3B-Abliterated-Q3_K_M.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Llama-3.2-3B-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Uncensored.Q3_K_S.gguf")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Abiray/Huihui-Ministral-3B-Instruct-2512-abliterated-GGUF/resolve/main/Huihui-Ministral-3B-Abliterated-Q3_K_M.gguf")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
@@ -183,7 +184,7 @@ def pipe_output(process,prefix,url_event=None,track_llama=False):
                     continue
                 log(f"PUBLIC WRITER URL: {public_url}"); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
 def llama_command(server):
-    cmd=[str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",str(selected_threads()),"--threads-batch",str(selected_batch_threads()),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",CACHE_REUSE,"--chat-template","llama3"]
+    cmd=[str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",str(selected_threads()),"--threads-batch",str(selected_batch_threads()),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",CACHE_REUSE]
     if SPEC_DRAFT_ENABLED: cmd += ["--spec-type","draft-simple","--spec-draft-model",str(DRAFT_MODEL_FILE),"--spec-draft-n-max",SPEC_DRAFT_N_MAX,"--spec-draft-p-min",SPEC_DRAFT_P_MIN]
     return cmd
 def start_llama(server):
