@@ -18,11 +18,11 @@ BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
 # NovelForge personal-use writer candidate for low-memory CPU hosting.
-# Qwen2.5-3B-Instruct-Uncensored in Q3_K_S keeps a much stronger 3B writer
-# while staying close enough to the Enzonic 2 GB RAM ceiling to be testable.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-3B-Instruct-Uncensored.Q3_K_S.gguf")
+# Aesir is a Llama 3.2 3B finetune aimed at RP/roleplay and uncensored/NSFW use,
+# which is a better fit for long-form fiction than a generic uncensored instruct model.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Llama-3.2-3b-NSFW_Aesir_Uncensored.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Qwen2.5-3B-Instruct-Uncensored-GGUF/resolve/main/Qwen2.5-3B-Instruct-Uncensored.Q3_K_S.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/Novaciano/Llama-3.2-3b-NSFW_Aesir_Uncensored-GGUF/resolve/main/Llama-3.2-3b-NSFW_Aesir_Uncensored.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
@@ -31,7 +31,7 @@ DRAFT_HF_MODEL_URL = os.getenv("DRAFT_HF_MODEL_URL", "https://huggingface.co/ggm
 SPEC_DRAFT_N_MAX = os.getenv("LLAMA_SPEC_DRAFT_N_MAX", "4")
 SPEC_DRAFT_P_MIN = os.getenv("LLAMA_SPEC_DRAFT_P_MIN", "0.10")
 
-# Conservative defaults for a ~2 GB container. They can still be overridden
+# Conservative defaults for the Enzonic container. They can still be overridden
 # from the host with N_CTX / LLAMA_BATCH / LLAMA_UBATCH / LLAMA_CACHE_REUSE.
 CONTEXT = os.getenv("N_CTX", "3072")
 BATCH_SIZE = os.getenv("LLAMA_BATCH", "256")
