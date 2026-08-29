@@ -183,7 +183,7 @@ def pipe_output(process,prefix,url_event=None,track_llama=False):
                     continue
                 log(f"PUBLIC WRITER URL: {public_url}"); threading.Thread(target=register_public_url,args=(public_url,),daemon=True).start(); url_event.set()
 def llama_command(server):
-    cmd=[str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",str(selected_threads()),"--threads-batch",str(selected_batch_threads()),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",CACHE_REUSE]
+    cmd=[str(server),"-m",str(MODEL_FILE),"-c",CONTEXT,"--host",HOST,"--port",PORT,"--parallel","1","--threads",str(selected_threads()),"--threads-batch",str(selected_batch_threads()),"--batch-size",BATCH_SIZE,"--ubatch-size",UBATCH_SIZE,"--cache-reuse",CACHE_REUSE,"--chat-template","llama3"]
     if SPEC_DRAFT_ENABLED: cmd += ["--spec-type","draft-simple","--spec-draft-model",str(DRAFT_MODEL_FILE),"--spec-draft-n-max",SPEC_DRAFT_N_MAX,"--spec-draft-p-min",SPEC_DRAFT_P_MIN]
     return cmd
 def start_llama(server):
