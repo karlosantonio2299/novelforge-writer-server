@@ -17,13 +17,12 @@ ROOT = Path(__file__).resolve().parent
 BIN_DIR = ROOT / "bin"
 MODEL_DIR = ROOT / "models"
 
-# NovelForge personal-use final writer candidate.
-# Heretic Q25-1.5B-VeoLu: Qwen2.5-1.5B-Instruct foundation + dedicated writing,
-# roleplay, adventuring and reasoning finetunes, then Heretic decensoring.
-# Chosen to combine Qwen2.5-style instruction discipline with story-specialized prose while staying CPU-fast.
-MODEL_FILENAME = os.getenv("MODEL_FILENAME", "heretic_Q25-1.5B-VeoLu.Q4_K_M.gguf")
+# NovelForge personal-use writer candidate for low-memory CPU hosting.
+# Qwen2.5-3B-Instruct-Uncensored in Q3_K_S keeps a much stronger 3B writer
+# while staying close enough to the Enzonic 2 GB RAM ceiling to be testable.
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "Qwen2.5-3B-Instruct-Uncensored.Q3_K_S.gguf")
 MODEL_FILE = MODEL_DIR / Path(MODEL_FILENAME).name
-HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/heretic_Q25-1.5B-VeoLu-GGUF/resolve/main/heretic_Q25-1.5B-VeoLu.Q4_K_M.gguf?download=true")
+HF_MODEL_URL = os.getenv("HF_MODEL_URL", "https://huggingface.co/mradermacher/Qwen2.5-3B-Instruct-Uncensored-GGUF/resolve/main/Qwen2.5-3B-Instruct-Uncensored.Q3_K_S.gguf?download=true")
 
 SPEC_DRAFT_ENABLED = os.getenv("LLAMA_SPEC_DRAFT", "0").strip().lower() not in {"0", "false", "off", "no"}
 DRAFT_MODEL_FILENAME = os.getenv("DRAFT_MODEL_FILENAME", "Qwen3-0.6B-Q4_0.gguf")
@@ -32,10 +31,12 @@ DRAFT_HF_MODEL_URL = os.getenv("DRAFT_HF_MODEL_URL", "https://huggingface.co/ggm
 SPEC_DRAFT_N_MAX = os.getenv("LLAMA_SPEC_DRAFT_N_MAX", "4")
 SPEC_DRAFT_P_MIN = os.getenv("LLAMA_SPEC_DRAFT_P_MIN", "0.10")
 
-CONTEXT = os.getenv("N_CTX", "4096")
-BATCH_SIZE = os.getenv("LLAMA_BATCH", "512")
-UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "512")
-CACHE_REUSE = os.getenv("LLAMA_CACHE_REUSE", "512")
+# Conservative defaults for a ~2 GB container. They can still be overridden
+# from the host with N_CTX / LLAMA_BATCH / LLAMA_UBATCH / LLAMA_CACHE_REUSE.
+CONTEXT = os.getenv("N_CTX", "3072")
+BATCH_SIZE = os.getenv("LLAMA_BATCH", "256")
+UBATCH_SIZE = os.getenv("LLAMA_UBATCH", "128")
+CACHE_REUSE = os.getenv("LLAMA_CACHE_REUSE", "256")
 PORT = os.getenv("PORT") or os.getenv("SERVER_PORT") or os.getenv("APP_PORT") or os.getenv("P_SERVER_PORT") or "8080"
 HOST = "0.0.0.0"
 PUBLIC_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.I)
